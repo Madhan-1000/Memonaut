@@ -1,30 +1,62 @@
-# React + TypeScript + Vite
+# Memonaut
+![Memonaut](assets\logo.png)
+> Your private AI second brain — capture anything, understand everything, on your device.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+---
 
-Currently, two official plugins are available:
+## What is Memonaut?
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Memonaut is a lightweight desktop application that runs silently in the background. Hit a hotkey on anything you read — an article, a research paper, a code snippet — and it's captured instantly. Later, have a natural conversation with everything you've saved.
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+## Why Memonaut?
 
-- Configure the top-level `parserOptions` property like this:
+Tools like Notion and Obsidian require discipline to use consistently. Rewind AI records everything and sends it to the cloud. Memonaut sits in the middle — you choose what to capture, and everything stays local by default.
 
-```js
-export default {
-  // other rules...
-  parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-  },
-}
+---
+
+## How it Works
+```
+Capture  → hotkey or floating button on any text
+Store    → saved locally on your machine
+Chat     → ask questions about what you've captured
 ```
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+---
+
+## AI Options
+
+Not every laptop can run a local LLM comfortably. Memonaut gives you a choice:
+
+| Option | How | Privacy |
+|---|---|---|
+| Local model (0.5B) | Runs fully on your device | Complete |
+| Hugging Face API | Free inference API, bring your own key | Partial |
+| Gemini API | Google's free tier, bring your own key | Partial |
+
+You pick what works for your machine. No option is forced on you.
+
+---
+
+## Tech Stack
+
+- **Desktop** — Electron + React + TypeScript
+- **UI** — Framer Motion + Tailwind CSS
+- **Backend** — Python + FastAPI
+- **RAG** — FAISS + sentence-transformers
+- **Storage** — SQLite
+
+---
+
+## Status
+
+🚧 Early development. Not ready for use yet.
+
+Building in public — star the repo to follow along.
+
+---
+
+## License
+
+MIT © 2025 Madhan
