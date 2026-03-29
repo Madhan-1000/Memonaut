@@ -1,5 +1,5 @@
 # Memonaut
-![Memonaut](assets\memonaut.png)
+![Memonaut](.\assets\memonaut.png)
 > Your private AI second brain — capture anything, understand everything, on your device.
 
 ---
