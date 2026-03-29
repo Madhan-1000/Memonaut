@@ -1,5 +1,7 @@
 # Memonaut
-![Memonaut](.\assets\memonaut.png)
+
+![Memonaut](https://raw.githubusercontent.com/Madhan-1000/Memonaut/refs/heads/main/assets/memonaut.png)
+
 > Your private AI second brain — capture anything, understand everything, on your device.
 
 ---
