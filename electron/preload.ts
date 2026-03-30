@@ -1,10 +1,30 @@
 import { ipcRenderer, contextBridge } from 'electron'
 
-// --------- Expose some API to the Renderer process ---------
+function subscribe<T>(channel: string, cb: (payload: T) => void) {
+  const handler = (_event: unknown, payload: T) => cb(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.off(channel, handler)
+}
+
+const snippetApi: Window['snippetApi'] = {
+  load: () => ipcRenderer.invoke('snippets:load'),
+  add: (text: string, source = 'manual') => ipcRenderer.invoke('snippets:add', { text, source }),
+  captureCopy: () => ipcRenderer.invoke('capture:copy'),
+  onHotkeySnippet: (cb) => subscribe('hotkey:snippet', cb),
+  onHotkeyStatus: (cb) => subscribe('hotkey:status', cb),
+  ready: () => {
+    ipcRenderer.send('renderer:ready')
+  },
+  status: () => ipcRenderer.invoke('status:last'),
+}
+
+contextBridge.exposeInMainWorld('snippetApi', snippetApi)
+
+// Legacy passthrough (optional)
 contextBridge.exposeInMainWorld('ipcRenderer', {
   on(...args: Parameters<typeof ipcRenderer.on>) {
     const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
+    return ipcRenderer.on(channel, (event, ...rest) => listener(event, ...rest))
   },
   off(...args: Parameters<typeof ipcRenderer.off>) {
     const [channel, ...omit] = args
@@ -18,7 +38,7 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
     const [channel, ...omit] = args
     return ipcRenderer.invoke(channel, ...omit)
   },
-
-  // You can expose other APTs you need here.
-  // ...
 })
+
+// Inform main process that preload is ready to receive status updates
+ipcRenderer.send('preload:ready')

@@ -25,6 +25,9 @@ Store    → saved locally on your machine
 Chat     → ask questions about what you've captured
 ```
 
+- Capture hotkey: Ctrl/Cmd + Shift + Q
+- Snippets are stored locally in `snippets.sqlite` under your app data directory.
+
 ---
 
 ## AI Options
