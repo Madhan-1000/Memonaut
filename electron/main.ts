@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, clipboard, Notification } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, clipboard, Notification, Tray, Menu, nativeImage } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
@@ -41,7 +41,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
-type Snippet = { id: string; text: string; source: string; createdAt: number }
+type Snippet = { id: string; text: string; source: string; createdAt: number; category: string }
 type HotkeyStatus =
   | { state: 'ready'; accelerator?: string }
   | { state: 'unavailable'; reason?: string }
@@ -54,6 +54,26 @@ let activeHotkey = HOTKEY
 let win: BrowserWindow | null
 let lastStatus: HotkeyStatus = { state: 'unavailable', reason: 'not registered' }
 let db: Database | null = null
+let tray: Tray | null = null
+let isQuitting = false
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  if (win) {
+    if (!win.isVisible()) win.show()
+    win.focus()
+  } else {
+    createWindow()
+  }
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
+})
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -109,43 +129,140 @@ async function ensureDatabaseReady(): Promise<Database> {
       id TEXT PRIMARY KEY,
       text TEXT NOT NULL,
       createdAt INTEGER NOT NULL,
-      source TEXT NOT NULL CHECK (source IN ('hotkey','manual'))
+      source TEXT NOT NULL CHECK (source IN ('hotkey','manual')),
+      category TEXT NOT NULL DEFAULT 'uncategorized'
     )
   `).run()
+
+  // Backfill category column for existing databases
+  const hasCategory = db
+    .prepare("PRAGMA table_info('snippets')")
+    .all()
+    .some((row: any) => row.name === 'category')
+  if (!hasCategory) {
+    db.prepare("ALTER TABLE snippets ADD COLUMN category TEXT NOT NULL DEFAULT 'uncategorized'").run()
+    console.log('Added category column to snippets table')
+  }
 
   await migrateLegacyJson(db)
   return db
 }
 
+function ensureAutoLaunch() {
+  try {
+    const settings = app.getLoginItemSettings()
+    if (!settings.openAtLogin) {
+      app.setLoginItemSettings({ openAtLogin: true })
+    }
+  } catch (err) {
+    console.error('Failed to configure auto-launch', err)
+  }
+}
+
 async function readSnippets(): Promise<Snippet[]> {
   const database = await ensureDatabaseReady()
-  const rows = database.prepare('SELECT id, text, createdAt, source FROM snippets ORDER BY createdAt DESC').all()
+  const rows = database
+    .prepare("SELECT id, text, createdAt, source, COALESCE(category, 'uncategorized') AS category FROM snippets ORDER BY createdAt DESC")
+    .all()
   return rows as Snippet[]
+}
+
+function categorizeSnippet(text: string): string {
+  const t = text.toLowerCase()
+  const rules: Array<{ label: string; match: RegExp }> = [
+    { label: 'biology', match: /(cell|dna|protein|genome|enzyme|biolog)/ },
+    { label: 'chemistry', match: /(molecul|compound|reaction|chem|bond|stoichiometr)/ },
+    { label: 'physics', match: /(quantum|force|energy|momentum|relativity|thermo)/ },
+    { label: 'math', match: /(theorem|lemma|proof|integral|derivative|matrix|vector|calculus|algebra|geometry)/ },
+    { label: 'statistics', match: /(probabilit|statistic|regression|bayes|variance|mean|median|distribution)/ },
+    { label: 'cs-algorithms', match: /(algorithm|complexity|big o|graph|tree|dp|dynamic programming)/ },
+    { label: 'code', match: /(function|class|import|export|console\.log|error|stack trace|api|http|typescript|javascript|python|java|c\+\+|c#|go|rust)/ },
+    { label: 'ai-ml', match: /(model|neural|transformer|llm|prompt|embedding|ml|machine learning|dataset|training|inference)/ },
+    { label: 'data-science', match: /(pandas|numpy|dataframe|analysis|visualization|plot|chart|eda)/ },
+    { label: 'database-sql', match: /(sql|query|select|join|index|postgres|mysql|sqlite|mongodb)/ },
+    { label: 'devops', match: /(docker|kubernetes|k8s|deployment|ci\/cd|pipeline|server|cloud|aws|azure|gcp|ansible|terraform)/ },
+    { label: 'security', match: /(vuln|cve|encryption|auth|oauth|token|xss|csrf|jwt|pentest|security)/ },
+    { label: 'networking', match: /(tcp|udp|ip|dns|latency|bandwidth|socket|http\/2|http\/3|tls)/ },
+    { label: 'web', match: /(react|vue|angular|svelte|css|html|frontend|ui)/ },
+    { label: 'mobile', match: /(android|ios|swift|kotlin|react native|flutter)/ },
+    { label: 'cloud', match: /(s3|ec2|lambda|cloud run|app engine|cloudfront|cdn|iam)/ },
+    { label: 'task', match: /(todo|to-do|task|action item|follow up|due|deadline|reminder|next step)/ },
+    { label: 'meeting', match: /(meeting|minutes|notes|attendees|agenda|follow-up)/ },
+    { label: 'product', match: /(roadmap|feature|spec|requirement|acceptance criteria|user story)/ },
+    { label: 'design', match: /(ux|ui|wireframe|figma|mockup|layout|contrast|typograph)/ },
+    { label: 'writing', match: /(draft|outline|headline|intro|summary|blog|essay|copy|content)/ },
+    { label: 'research', match: /(citation|doi|paper|study|experiment|dataset)/ },
+    { label: 'reference', match: /(reference|source:|url|link|bookmark)/ },
+    { label: 'business', match: /(revenue|pricing|market|sales|kpi|stakeholder|okr|roi|budget)/ },
+    { label: 'marketing', match: /(campaign|seo|sem|conversion|landing page|ad copy|funnel)/ },
+    { label: 'sales', match: /(lead|prospect|deal|pipeline|crm|close|quote)/ },
+    { label: 'finance', match: /(equity|bond|yield|interest rate|inflation|gdp|cash flow|valuation|p&l|balance sheet)/ },
+    { label: 'economics', match: /(macro|microeconomics|supply|demand|elasticity|gdp|cpi)/ },
+    { label: 'legal-policy', match: /(contract|nda|gdpr|hipaa|policy|compliance|licensing|privacy)/ },
+    { label: 'health-medicine', match: /(medication|symptom|diagnosis|therapy|disease|medical|clinic|prescription)/ },
+    { label: 'fitness', match: /(fitness|calorie|diet|workout|exercise|set|rep|run|yoga)/ },
+    { label: 'education-studies', match: /(lecture|class notes|course|study guide|syllabus|exam|quiz|homework|assignment)/ },
+    { label: 'motivation', match: /(motivation|inspiration|quote|affirmation|mindset|goal)/ },
+    { label: 'personal', match: /(shopping list|grocery|travel|booking|reservation|birthday|anniversary|gift)/ },
+    { label: 'productivity', match: /(workflow|routine|habit|time block|pomodoro|focus)/ },
+    { label: 'creative', match: /(poem|story|plot|character|lyrics|melody|riff|art|sketch)/ },
+    { label: 'cooking', match: /(recipe|ingredient|oven|bake|cook|grill|boil|serves)/ },
+    { label: 'news', match: /(breaking|headline|news|report|journalism)/ },
+    { label: 'sports', match: /(game|match|tournament|league|score|team|player|coach)/ },
+    { label: 'philosophy', match: /(ethics|epistemology|ontology|consciousness|kant|nietzsche|plato)/ },
+    { label: 'history', match: /(ancient|medieval|revolution|war|empire|civilization|dynasty|historical)/ },
+    { label: 'language', match: /(grammar|vocabulary|translation|linguistics|etymology|syntax|dialect)/ },
+    { label: 'env-science', match: /(climate|carbon|ecosystem|biodiversity|renewable|sustainability|emission)/ },
+    { label: 'crypto-web3', match: /(blockchain|bitcoin|ethereum|defi|nft|wallet|smart contract|solidity)/ },
+    { label: 'mental-health', match: /(anxiety|depression|therapy|mindfulness|burnout|stress|mental health)/ },
+    { label: 'social-media', match: /(twitter|linkedin|instagram|viral|engagement|followers|content creator)/ },
+    { label: 'startup', match: /(founder|fundraising|vc|pitch|mvp|traction|churn|arr|mrr|seed|series)/ },
+  ]
+
+  for (const rule of rules) {
+    if (rule.match.test(t)) return rule.label
+  }
+  return 'uncategorized'
 }
 
 async function appendSnippet(text: string, source = 'hotkey'): Promise<Snippet> {
   const database = await ensureDatabaseReady()
   const createdAt = Date.now()
+  const category = categorizeSnippet(text)
   const snippet: Snippet = {
     id: randomUUID(),
     text,
     source,
     createdAt,
+    category,
   }
 
   database
-    .prepare('INSERT INTO snippets (id, text, createdAt, source) VALUES (?, ?, ?, ?)')
-    .run(snippet.id, snippet.text, snippet.createdAt, snippet.source)
+    .prepare('INSERT INTO snippets (id, text, createdAt, source, category) VALUES (?, ?, ?, ?, ?)')
+    .run(snippet.id, snippet.text, snippet.createdAt, snippet.source, snippet.category)
 
   notifySnippet(snippet)
   broadcastSnippet(snippet)
   return snippet
 }
 
+function showWindow() {
+  if (!win) {
+    createWindow()
+    return
+  }
+  if (!win.isVisible()) win.show()
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
 function notifySnippet(snippet: Snippet) {
   if (!Notification.isSupported()) return
   const body = snippet.text.length > 120 ? `${snippet.text.slice(0, 117)}...` : snippet.text || 'Empty snippet'
   const notification = new Notification({ title: 'Snippet saved', body })
+  notification.on('click', () => {
+    showWindow()
+  })
   notification.show()
 }
 
@@ -272,10 +389,16 @@ function setupIpc() {
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    icon: path.join(process.env.APP_ROOT, 'assets', 'memonaut.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
+  })
+
+  win.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    win?.hide()
   })
 
   win.webContents.on('did-finish-load', () => {
@@ -293,21 +416,54 @@ function createWindow() {
   }
 }
 
+function createTray() {
+  const iconPath = path.join(process.env.APP_ROOT, 'assets', 'memonaut.png')
+  const image = nativeImage.createFromPath(iconPath)
+  if (image.isEmpty()) {
+    console.warn(`Tray icon missing at ${iconPath}, using empty icon`)
+  }
+  tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image)
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show',
+      click: () => {
+        showWindow()
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      },
+    },
+  ])
+  tray.setToolTip('Memonaut')
+  tray.setContextMenu(contextMenu)
+  tray.on('click', () => {
+    if (!win) {
+      createWindow()
+    } else {
+      win.isVisible() ? win.hide() : win.show()
+    }
+  })
+}
+
+app.on('window-all-closed', (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  win = null
+})
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-    win = null
-  }
-})
-
 app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
+  } else {
+    win?.show()
   }
 })
 
@@ -315,6 +471,8 @@ app.whenReady().then(async () => {
   await ensureDatabaseReady()
   setupIpc()
   createWindow()
+  createTray()
+  ensureAutoLaunch()
   registerHotkey()
 })
 

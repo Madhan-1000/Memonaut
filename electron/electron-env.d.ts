@@ -49,6 +49,7 @@ interface Snippet {
   text: string
   source: string
   createdAt: number
+  category: string
 }
 
 type HotkeyStatus =
