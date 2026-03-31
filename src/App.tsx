@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
-type Snippet = Window['snippetApi'] extends { load: () => Promise<infer S> } ? S extends Array<infer T> ? T : never : never
-type HotkeyStatus = Parameters<Window['snippetApi']['onHotkeyStatus']>[0] extends (arg: infer S) => void ? S : never
+type Snippet = { id: string; text: string; source: string; createdAt: number }
+type HotkeyStatus =
+  | { state: 'ready'; accelerator?: string }
+  | { state: 'unavailable'; reason?: string }
+  | { state: 'error'; message?: string }
 
 const formatTime = (value: string | number) => new Date(value).toLocaleString()
 
@@ -13,6 +16,7 @@ function App() {
   const [source, setSource] = useState('manual')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showSplash, setShowSplash] = useState(true)
 
   const upsertSnippet = (incoming: Snippet) => {
     setSnippets((prev) => [incoming, ...prev.filter((s) => s.id !== incoming.id)])
@@ -23,6 +27,12 @@ function App() {
     let unsubStatus: (() => void) | undefined
 
     async function init() {
+      if (!window.snippetApi) {
+        setError('Preload bridge unavailable. Restart Electron via dev:app (not browser).')
+        setLoading(false)
+        return
+      }
+
       try {
         setLoading(true)
         const [loaded, lastStatus] = await Promise.all([
@@ -62,8 +72,13 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSplash(false), 1800)
+    return () => clearTimeout(timer)
+  }, [])
+
   const statusText = useMemo(() => {
-    if (status.state === 'ready') return 'Hotkey ready (Ctrl/Cmd+Shift+Q)'
+    if (status.state === 'ready') return `Hotkey ready (${status.accelerator || 'Ctrl/Cmd+Shift+Q'})`
     if (status.state === 'unavailable') return `Hotkey unavailable${status.reason ? `: ${status.reason}` : ''}`
     return `Hotkey error${status.message ? `: ${status.message}` : ''}`
   }, [status])
@@ -86,64 +101,75 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header>
-        <div>
-          <p className="eyebrow">Memonaut</p>
-          <h1>Snippet capture</h1>
-          <p className="muted">Hotkey: Ctrl/Cmd + Shift + Q · Stored locally in snippets.sqlite</p>
-        </div>
-        <div className={`status pill ${status.state}`}>{statusText}</div>
-      </header>
-
-      <main>
-        <section className="card form-card">
-          <h2>Add snippet manually</h2>
-          <form onSubmit={handleAdd} className="form">
-            <label className="field">
-              <span>Text</span>
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Paste or type a snippet"
-                rows={4}
-              />
-            </label>
-            <label className="field">
-              <span>Source</span>
-              <input value={source} onChange={(e) => setSource(e.target.value)} />
-            </label>
-            <button type="submit" disabled={loading || !text.trim()}>
-              {loading ? 'Working…' : 'Save snippet'}
-            </button>
-          </form>
-          {error && <p className="error">{error}</p>}
-        </section>
-
-        <section className="card list-card">
-          <div className="list-head">
-            <h2>Snippets</h2>
-            <span className="muted">{snippets.length} saved</span>
+    <div className="app">
+      {showSplash && (
+        <div className="splash">
+          <div className="splash-inner">
+            <div className="logo-word">Memonaut</div>
+            <div className="logo-sub">- Second Brain</div>
           </div>
-          {loading && snippets.length === 0 ? (
-            <p className="muted">Loading…</p>
-          ) : snippets.length === 0 ? (
-            <p className="muted">No snippets yet. Use the hotkey or the form to add one.</p>
-          ) : (
-            <ul className="snippet-list">
-              {snippets.map((snippet) => (
-                <li key={snippet.id} className="snippet">
-                  <div className="snippet-meta">
-                    <span className="pill badge">{snippet.source || 'unknown'}</span>
-                    <span className="muted">{formatTime(snippet.createdAt)}</span>
-                  </div>
-                  <p className="snippet-text">{snippet.text}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </main>
+        </div>
+      )}
+
+      <div className={`app-shell ${showSplash ? 'blurred' : ''}`}>
+        <header>
+          <div>
+            <p className="eyebrow">Memonaut</p>
+            <h1>Snippet capture</h1>
+            <p className="muted">Hotkey: Ctrl/Cmd + Shift + Q · Stored locally in snippets.sqlite</p>
+          </div>
+          <div className={`status pill ${status.state}`}>{statusText}</div>
+        </header>
+
+        <main>
+          <section className="card form-card">
+            <h2>Add snippet manually</h2>
+            <form onSubmit={handleAdd} className="form">
+              <label className="field">
+                <span>Text</span>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Paste or type a snippet"
+                  rows={4}
+                />
+              </label>
+              <label className="field">
+                <span>Source</span>
+                <input value={source} onChange={(e) => setSource(e.target.value)} />
+              </label>
+              <button type="submit" disabled={loading || !text.trim()}>
+                {loading ? 'Working…' : 'Save snippet'}
+              </button>
+            </form>
+            {error && <p className="error">{error}</p>}
+          </section>
+
+          <section className="card list-card">
+            <div className="list-head">
+              <h2>Snippets</h2>
+              <span className="muted">{snippets.length} saved</span>
+            </div>
+            {loading && snippets.length === 0 ? (
+              <p className="muted">Loading…</p>
+            ) : snippets.length === 0 ? (
+              <p className="muted">No snippets yet. Use the hotkey or the form to add one.</p>
+            ) : (
+              <ul className="snippet-list">
+                {snippets.map((snippet) => (
+                  <li key={snippet.id} className="snippet">
+                    <div className="snippet-meta">
+                      <span className="pill badge">{snippet.source || 'unknown'}</span>
+                      <span className="muted">{formatTime(snippet.createdAt)}</span>
+                    </div>
+                    <p className="snippet-text">{snippet.text}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </main>
+      </div>
     </div>
   )
 }

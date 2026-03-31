@@ -1,3 +1,43 @@
+.app {
+  position: relative;
+  min-height: 100vh;
+}
+
+.splash {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #000;
+  z-index: 10;
+  animation: fadeOut 4s linear forwards;
+}
+
+.splash-inner {
+  width: min(900px, 92vw);
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.75rem;
+  color: #fff;
+  position: relative;
+}
+
+.logo-word {
+  font-family: 'Rubik 80s Fade', cursive;
+  font-size: clamp(2.8rem, 6vw, 4.5rem);
+  letter-spacing: 0.06em;
+  text-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  animation: logoTravelLeft 4s ease forwards;
+}
+
+.logo-sub {
+  font-size: clamp(1.1rem, 3vw, 1.6rem);
+  color: #ffffff;
+  opacity: 0;
+  animation: logoTravelRight 4s ease forwards;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -5,6 +45,11 @@
   padding: 2rem;
   max-width: 960px;
   margin: 0 auto;
+  transition: filter 0.4s ease;
+}
+
+.blurred {
+  filter: blur(6px) saturate(0.7);
 }
 
 header {
@@ -191,4 +236,23 @@ button:disabled {
   main {
     grid-template-columns: 1fr;
   }
+}
+
+@keyframes fadeOut {
+  0% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes logoTravelLeft {
+  0% { opacity: 0; transform: translateY(18px) translateX(0); }
+  20% { opacity: 1; transform: translateY(0) translateX(0); }
+  60% { opacity: 1; transform: translateY(0) translateX(0); }
+  100% { opacity: 0; transform: translateY(-6px) translateX(-220vw); }
+}
+
+@keyframes logoTravelRight {
+  0% { opacity: 0; transform: translateY(18px) translateX(0); }
+  20% { opacity: 1; transform: translateY(0) translateX(0); }
+  60% { opacity: 1; transform: translateY(0) translateX(0); }
+  100% { opacity: 0; transform: translateY(-6px) translateX(220vw); }
 }

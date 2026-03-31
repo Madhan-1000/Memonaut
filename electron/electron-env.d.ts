@@ -52,6 +52,6 @@ interface Snippet {
 }
 
 type HotkeyStatus =
-  | { state: 'ready' }
+  | { state: 'ready'; accelerator?: string }
   | { state: 'unavailable'; reason?: string }
   | { state: 'error'; message?: string }

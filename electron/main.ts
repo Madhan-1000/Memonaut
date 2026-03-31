@@ -1,19 +1,35 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, clipboard, Notification } from 'electron'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import fssync from 'node:fs'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import os from 'node:os'
 import Database from 'better-sqlite3'
 
-const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Keep app data in a dedicated folder
-app.setPath('userData', path.join(app.getPath('appData'), 'Memonaut'))
-app.setPath('cache', path.join(app.getPath('userData'), 'Cache'))
+// Keep a stable userData location so the database persists across runs
+const USER_DATA_DIR = path.join(app.getPath('appData'), 'Memonaut')
+app.setPath('userData', USER_DATA_DIR)
+
+// Keep userData persistent, but move caches to a writable temp location to avoid permission issues
+const CACHE_ROOT = fssync.mkdtempSync(path.join(os.tmpdir(), 'MemonautCache-'))
+const getDataDir = () => path.join(app.getPath('userData'), 'data')
+const getDbPath = () => path.join(getDataDir(), 'snippets.sqlite')
+const getLegacyJsonPath = () => path.join(getDataDir(), 'snippets.json')
+
+app.setPath('cache', CACHE_ROOT)
+
+// Point Chromium caches to writable temp paths and disable disk caches
+app.commandLine.appendSwitch('disk-cache-dir', path.join(CACHE_ROOT, 'disk'))
+app.commandLine.appendSwitch('media-cache-dir', path.join(CACHE_ROOT, 'media'))
+app.commandLine.appendSwitch('gpu-cache-path', path.join(CACHE_ROOT, 'gpu'))
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+app.commandLine.appendSwitch('disk-cache-size', '0')
+app.commandLine.appendSwitch('media-cache-size', '0')
+app.commandLine.appendSwitch('disable-http-cache')
 
 // The built directory structure
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -27,29 +43,34 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 type Snippet = { id: string; text: string; source: string; createdAt: number }
 type HotkeyStatus =
-  | { state: 'ready' }
+  | { state: 'ready'; accelerator?: string }
   | { state: 'unavailable'; reason?: string }
   | { state: 'error'; message?: string }
 
-const DATA_DIR = path.join(app.getPath('userData'), 'data')
-const SNIPPETS_PATH = path.join(DATA_DIR, 'snippets.json')
-const DB_PATH = path.join(DATA_DIR, 'snippets.sqlite')
-const HOTKEY_ACCEL = process.platform === 'darwin' ? 'Command+Shift+Q' : 'Control+Shift+Q'
+const DEFAULT_ACCEL = 'CommandOrControl+Shift+Q'
+const HOTKEY = process.env.HOTKEY_ACCEL || DEFAULT_ACCEL
+let activeHotkey = HOTKEY
 
 let win: BrowserWindow | null
 let lastStatus: HotkeyStatus = { state: 'unavailable', reason: 'not registered' }
-let db: Database.Database | null = null
+let db: Database | null = null
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function ensureDataDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true })
+  const dataDir = getDataDir()
+  await fs.mkdir(dataDir, { recursive: true })
+  await fs.mkdir(CACHE_ROOT, { recursive: true })
+  await fs.mkdir(path.join(CACHE_ROOT, 'disk'), { recursive: true })
+  await fs.mkdir(path.join(CACHE_ROOT, 'media'), { recursive: true })
+  await fs.mkdir(path.join(CACHE_ROOT, 'gpu'), { recursive: true })
 }
 
-async function migrateLegacyJson(database: Database.Database) {
-  if (!fssync.existsSync(SNIPPETS_PATH)) return
+async function migrateLegacyJson(database: Database) {
+  const legacyPath = getLegacyJsonPath()
+  if (!fssync.existsSync(legacyPath)) return
   try {
-    const raw = await fs.readFile(SNIPPETS_PATH, 'utf-8')
+    const raw = await fs.readFile(legacyPath, 'utf-8')
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return
 
@@ -68,17 +89,19 @@ async function migrateLegacyJson(database: Database.Database) {
       }
     })
     tx(parsed)
-    await fs.unlink(SNIPPETS_PATH)
+    await fs.unlink(legacyPath)
     console.log('Migrated legacy snippets.json into SQLite')
   } catch (err) {
     console.error('Migration from JSON failed', err)
   }
 }
 
-async function ensureDatabaseReady(): Promise<Database.Database> {
+async function ensureDatabaseReady(): Promise<Database> {
   if (db) return db
   await ensureDataDir()
-  db = new Database(DB_PATH)
+  const dbPath = getDbPath()
+  console.log(`Using snippets DB at ${dbPath}`)
+  db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.prepare(`
@@ -188,28 +211,39 @@ async function captureCopyFlow(): Promise<Snippet | null> {
 }
 
 function registerHotkey() {
-  try {
-    const ok = globalShortcut.register(HOTKEY_ACCEL, async () => {
-      try {
-        const snippet = await captureCopyFlow()
-        if (snippet) {
-          broadcastStatus({ state: 'ready' })
-        }
-      } catch (err) {
-        console.error('Hotkey handler failed', err)
-        broadcastStatus({ state: 'error', message: 'hotkey handler failed' })
+  console.log(`Registering hotkey: ${HOTKEY}`)
+  const handler = async () => {
+    try {
+      const snippet = await captureCopyFlow()
+      if (snippet) {
+        broadcastStatus({ state: 'ready', accelerator: activeHotkey })
       }
-    })
-
-    if (ok) {
-      broadcastStatus({ state: 'ready' })
-    } else {
-      broadcastStatus({ state: 'unavailable', reason: 'registration failed' })
+    } catch (err) {
+      console.error('Hotkey handler failed', err)
+      broadcastStatus({ state: 'error', message: 'hotkey handler failed' })
     }
-  } catch (err) {
-    console.error('Hotkey registration failed', err)
-    broadcastStatus({ state: 'error', message: 'registration exception' })
   }
+
+  try {
+    globalShortcut.register(HOTKEY, handler)
+
+    if (globalShortcut.isRegistered(HOTKEY)) {
+      activeHotkey = HOTKEY
+      broadcastStatus({ state: 'ready', accelerator: HOTKEY })
+      return
+    }
+
+    console.warn(`Hotkey registration reported not registered for ${HOTKEY}`)
+  } catch (err) {
+    console.error(`Hotkey registration failed for ${HOTKEY}`, err)
+    broadcastStatus({ state: 'error', message: 'hotkey registration failed' })
+    return
+  }
+
+  broadcastStatus({
+    state: 'unavailable',
+    reason: `registration failed for ${HOTKEY} (key in use or blocked by OS)`,
+  })
 }
 
 function setupIpc() {
